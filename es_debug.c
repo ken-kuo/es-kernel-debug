@@ -29,6 +29,7 @@ void test_find_lock_page(void);
 void test_file_dentry(void);
 void test_workqueue(void);
 void test_task_dump(void);
+void test_task_dump_hook(void);
 
 uint32_t test_watch_value = 10;
 struct perf_event * __percpu *sample_hbp;
@@ -60,6 +61,7 @@ enum {
 	TEST_FILE_DENTRY,
 	TEST_WORKQUEUE,
 	TEST_TASK_DUMP = 15,
+	TEST_TASK_DUMP_HOOK,
 };
 
 static void
@@ -113,17 +115,36 @@ int es_log_printk(const char *fmt, va_list args)
 	static char textbuf[ES_LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len = 0;
+	unsigned long flags;
 
+	local_irq_save(flags);
 	text_len = vscnprintf(text, sizeof(textbuf), fmt, args);
 
 	file_write(es_log_fp, text, text_len);
 
+	local_irq_restore(flags);
 	return r;
+}
+
+void test_task_dump_hook() {
+	int cpu;
+	printk_func_t *printk_func_p;
+	printk_func_t vprintk_func;
+
+	printk_func_p = (printk_func_t *)kallsyms_lookup_name("printk_func");
+	for_each_possible_cpu(cpu) {
+		vprintk_func = per_cpu(*printk_func_p, cpu);
+		printk("cpu %d: printk = %pF\n", cpu, vprintk_func);
+	}
 }
 
 void test_task_dump() {
 	printk_func_t *printk_func_p;
 	printk_func_t vprintk_func;
+	cpumask_t cpus_allowed_ori;
+
+	cpus_allowed_ori = current->cpus_allowed;
+	set_cpus_allowed_ptr(current, cpumask_of(smp_processor_id()));
 
 	printk_func_p = (printk_func_t *)kallsyms_lookup_name("printk_func");
  	vprintk_func = this_cpu_read(*printk_func_p);
@@ -142,6 +163,8 @@ void test_task_dump() {
 
 	file_close(es_log_fp);
 	vfree(task_bt_buf);
+
+	set_cpus_allowed_ptr(current, &cpus_allowed_ori);
 }
 
 void test_workqueue(void) {
@@ -426,6 +449,9 @@ static int write_op(void *data, u64 value)
 			break;
 		case TEST_TASK_DUMP:
 			test_task_dump();
+			break;
+		case TEST_TASK_DUMP_HOOK:
+			test_task_dump_hook();
 			break;
 		default:
 			break;
