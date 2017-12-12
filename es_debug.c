@@ -105,8 +105,8 @@ int file_write(struct file *fp, unsigned char *data, unsigned int size)
 	oldfs = get_fs();
 	set_fs(get_ds());
 
-	//fp->f_op->write(fp, (char *)data, size, &fp->f_pos);
-	offset += vfs_write(fp, data, size, &offset);
+	fp->f_op->write(fp, (char *)data, size, &fp->f_pos);
+	//offset += vfs_write(fp, data, size, &offset);
 
 	set_fs(oldfs);
 	return ret;
@@ -120,12 +120,14 @@ int es_log_printk(const char *fmt, va_list args)
 	size_t text_len = 0;
 	unsigned long flags;
 
-	local_irq_save(flags);
+	//local_irq_save(flags);
+	mutex_lock(&mutex_test_lock);
 	text_len = vscnprintf(text, sizeof(textbuf), fmt, args);
 
 	file_write(es_log_fp, text, text_len);
 
-	local_irq_restore(flags);
+	//local_irq_restore(flags);
+	mutex_unlock(&mutex_test_lock);
 	return r;
 }
 
@@ -142,6 +144,7 @@ void test_task_dump_hook() {
 }
 
 void test_task_dump() {
+	int i;
 	printk_func_t *printk_func_p;
 	printk_func_t vprintk_func;
 	cpumask_t cpus_allowed_ori;
@@ -160,7 +163,8 @@ void test_task_dump() {
 
 	this_cpu_write(*printk_func_p, &es_log_printk);
 
-	handle_sysrq('t');
+	for (i = 0; i < 200; i++)
+		handle_sysrq('t');
 
 	this_cpu_write(*printk_func_p, vprintk_func);
 
