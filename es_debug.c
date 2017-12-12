@@ -72,6 +72,7 @@ work_handler(struct work_struct *work){
 #define TASK_BT_BUF_SIZE (8 * 1024)
 #define TASK_BT_LOG_FILE "/var/log/es_debug.log"
 #define ES_LOG_LINE_MAX 1024
+loff_t offset = 0;
 
 struct file *file_open(const char *path, int flags, int rights)
 {
@@ -79,6 +80,7 @@ struct file *file_open(const char *path, int flags, int rights)
 	mm_segment_t oldfs;
 	int err = 0;
 
+	offset = 0;
 	oldfs = get_fs();
 	set_fs(get_ds());
 	fp = filp_open(path, flags, rights);
@@ -103,7 +105,8 @@ int file_write(struct file *fp, unsigned char *data, unsigned int size)
 	oldfs = get_fs();
 	set_fs(get_ds());
 
-	fp->f_op->write(fp, (char *)data, size, &fp->f_pos);
+	//fp->f_op->write(fp, (char *)data, size, &fp->f_pos);
+	offset += vfs_write(fp, data, size, &offset);
 
 	set_fs(oldfs);
 	return ret;
