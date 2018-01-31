@@ -8,10 +8,12 @@
 #include <linux/pagemap.h>
 #include <linux/percpu.h>
 #include <linux/sysrq.h>
+#include <asm/tlbflush.h>
 
 MODULE_LICENSE("GPL");
 
 
+static uint64_t arg0, arg1, arg2 = 0;
 static struct dentry *dir = 0;
 void test_stack_protector(void);
 void test_watchpoint(void);
@@ -30,6 +32,7 @@ void test_file_dentry(void);
 void test_workqueue(void);
 void test_task_dump(void);
 void test_task_dump_hook(void);
+void test_tlb_op(void);
 
 uint32_t test_watch_value = 10;
 struct perf_event * __percpu *sample_hbp;
@@ -62,6 +65,8 @@ enum {
 	TEST_WORKQUEUE,
 	TEST_TASK_DUMP = 15,
 	TEST_TASK_DUMP_HOOK,
+	TEST_TLB_OP,
+	TEST_SLUB,
 };
 
 static void
@@ -118,7 +123,7 @@ int es_log_printk(const char *fmt, va_list args)
 	static char textbuf[ES_LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len = 0;
-	unsigned long flags;
+	//unsigned long flags;
 
 	//local_irq_save(flags);
 	mutex_lock(&mutex_test_lock);
@@ -409,6 +414,40 @@ void test_stack_protector(){
 	printk(KERN_INFO "%s:%d\n", __FUNCTION__, __LINE__);
 }
 
+volatile int tlb_op_false = 0;
+void test_tlb_op() {
+	//flush_tlb_page(current->mm->mmap, arg0);
+	void (* flush_tlb_current_task)(void) = (void *)kallsyms_lookup_name("flush_tlb_current_task");
+	flush_tlb_current_task();
+}
+
+#define MY_OBJ_NUM 10
+struct slab_obj {
+	int aa[10];
+};
+
+typedef struct slab_obj* slab_obj_t;
+slab_obj_t memblk[MY_OBJ_NUM];
+struct kmem_cache *myslabobj[MY_OBJ_NUM];
+
+void test_slub() {
+	int i;
+	struct kmem_cache *myslabobj;
+
+		myslabobj = kmem_cache_create("my_slab_obj",
+				sizeof(struct slab_obj), 0, SLAB_POISON | SLAB_HWCACHE_ALIGN, NULL);
+
+	for (i = 0; i < MY_OBJ_NUM; i++) {
+		memblk[i] = kmem_cache_alloc(myslabobj, GFP_KERNEL);
+	}
+
+	for (i = 0; i < MY_OBJ_NUM; i++) {
+		kfree(memblk[i]);
+	}
+
+	kmem_cache_destroy(myslabobj);
+}
+
 static int write_op(void *data, u64 value)
 {
 	printk(KERN_INFO  "write value: %llu\n", value);
@@ -460,6 +499,12 @@ static int write_op(void *data, u64 value)
 		case TEST_TASK_DUMP_HOOK:
 			test_task_dump_hook();
 			break;
+		case TEST_TLB_OP:
+			test_tlb_op();
+			break;
+		case TEST_SLUB:
+			test_slub();
+			break;
 		default:
 			break;
 	}
@@ -469,6 +514,11 @@ static int write_op(void *data, u64 value)
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(debug_fops, NULL, write_op, "%llu\n");
+#define CREATE_ARGS(dir, name, type)	\
+	if (!debugfs_create_##type(#name, 0777, dir, &name )) {	\
+		    printk("error creating " #name " file");	\
+			    return (-ENODEV);	\
+	}
 
 int init_module(void)
 {
@@ -492,6 +542,10 @@ int init_module(void)
         printk(KERN_ALERT "failed to create es_debug\n");
         return -1;
     }
+
+	CREATE_ARGS(dir, arg0, u64);
+	CREATE_ARGS(dir, arg1, u64);
+	CREATE_ARGS(dir, arg2, u64);
 
 	init_waitqueue_head(&my_wait_queue);
 	test_page = alloc_page(GFP_KERNEL);
