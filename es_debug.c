@@ -8,10 +8,18 @@
 #include <linux/pagemap.h>
 #include <linux/percpu.h>
 #include <linux/sysrq.h>
+#include <linux/slab.h>
 #include <asm/tlbflush.h>
 
 MODULE_LICENSE("GPL");
 
+#define ES_DEBUG	1
+
+#ifdef ES_DEBUG
+#define es_printk(format, args...) printk(format, ##args)
+#else
+#define es_printk(args...)
+#endif
 
 static uint64_t arg0, arg1, arg2 = 0;
 static struct dentry *dir = 0;
@@ -33,6 +41,7 @@ void test_workqueue(void);
 void test_task_dump(void);
 void test_task_dump_hook(void);
 void test_tlb_op(void);
+void test_slub(void);
 
 uint32_t test_watch_value = 10;
 struct perf_event * __percpu *sample_hbp;
@@ -137,6 +146,7 @@ int es_log_printk(const char *fmt, va_list args)
 }
 
 void test_task_dump_hook() {
+#if 0
 	int cpu;
 	printk_func_t *printk_func_p;
 	printk_func_t vprintk_func;
@@ -146,9 +156,11 @@ void test_task_dump_hook() {
 		vprintk_func = per_cpu(*printk_func_p, cpu);
 		printk("cpu %d: printk = %pF\n", cpu, vprintk_func);
 	}
+#endif
 }
 
 void test_task_dump() {
+#if 0
 	int i;
 	printk_func_t *printk_func_p;
 	printk_func_t vprintk_func;
@@ -177,6 +189,7 @@ void test_task_dump() {
 	vfree(task_bt_buf);
 
 	set_cpus_allowed_ptr(current, &cpus_allowed_ori);
+#endif
 }
 
 void test_workqueue(void) {
@@ -233,7 +246,7 @@ void find_d_state_on_wq(wait_queue_head_t *wq){
 	struct task_struct *p;
 	struct wait_bit_queue *bq;
 	struct page *page;
-
+#if 0
 	/* check wait entry in wait queue */
 	list_for_each_entry(q, &wq->task_list, task_list) {
 		p = (struct task_struct *)q->private;
@@ -255,6 +268,7 @@ void find_d_state_on_wq(wait_queue_head_t *wq){
 			}
 		}
 	}
+#endif
 }
 
 void test_find_lock_page(void) {
@@ -421,31 +435,101 @@ void test_tlb_op() {
 	flush_tlb_current_task();
 }
 
-#define MY_OBJ_NUM 10
+#define MY_OBJ_NUM 3
 struct slab_obj {
 	int aa[10];
 };
 
 typedef struct slab_obj* slab_obj_t;
 slab_obj_t memblk[MY_OBJ_NUM];
-struct kmem_cache *myslabobj[MY_OBJ_NUM];
+struct kmem_cache *my_slab_cache;
+
+enum{
+	SLAB_CREATE_ALLOC,
+	SLAB_FREE,
+	SLAB_DESTROY
+};
 
 void test_slub() {
 	int i;
-	struct kmem_cache *myslabobj;
+	struct page *page;
 
-		myslabobj = kmem_cache_create("my_slab_obj",
-				sizeof(struct slab_obj), 0, SLAB_POISON | SLAB_HWCACHE_ALIGN, NULL);
+	switch (arg0){
+		case SLAB_CREATE_ALLOC:
+			printk("create and allocate:\n");
+			my_slab_cache = kmem_cache_create("my_slab_cache",
+					sizeof(struct slab_obj), 0, SLAB_HWCACHE_ALIGN, NULL);
+			printk("my_slab_cache = 0x%llx, cpu_slab = 0x%llx\n",
+					(uint64_t)my_slab_cache,
+					(uint64_t)__this_cpu_ptr(my_slab_cache->cpu_slab));
 
-	for (i = 0; i < MY_OBJ_NUM; i++) {
-		memblk[i] = kmem_cache_alloc(myslabobj, GFP_KERNEL);
+			for (i = 0; i < MY_OBJ_NUM; i++) {
+				memblk[i] = kmem_cache_alloc(my_slab_cache, GFP_KERNEL);
+
+				page = virt_to_head_page(memblk[i]);
+				es_printk("obj addr = 0x%llx, "
+						"page addr = 0x%llx, "
+						"page inuse = %d "
+						"slab cache = 0x%llx "
+						"slab name = %s "
+						"slab refcount = %d\n",
+						(uint64_t)memblk[i],
+						(uint64_t)page,
+						page->inuse,
+						(uint64_t)page->slab_cache,
+						page->slab_cache->name,
+						my_slab_cache->refcount);
+			}
+
+			printk("my_slab_cache->cpu_slab->page = 0x%llx\n"
+					"page = 0x%llx\n",
+					__this_cpu_ptr(my_slab_cache->cpu_slab)->page,
+					page);
+
+			if (page->slab_cache->memcg_params &&
+					page->slab_cache->memcg_params->is_root_cache)
+				printk("is the page a root cache = %d\n",
+						page->slab_cache->memcg_params->is_root_cache);
+			break;
+
+		case SLAB_FREE:
+			printk("free:\n");
+			for (i = 0; i < MY_OBJ_NUM; i++) {
+				page = virt_to_head_page(memblk[i]);
+				kmem_cache_free(my_slab_cache, memblk[i]);
+				es_printk("obj addr = 0x%llx, "
+						"page addr = 0x%llx, "
+						"page inuse = %d "
+						"slab cache = 0x%llx "
+						"slab name = %s "
+						"slab refcount = %d\n",
+						(uint64_t)memblk[i],
+						(uint64_t)page,
+						page->inuse,
+						(uint64_t)page->slab_cache,
+						page->slab_cache->name,
+						my_slab_cache->refcount);
+			}
+
+			if (page->slab_cache->memcg_params &&
+					page->slab_cache->memcg_params->is_root_cache)
+				printk("is the page a root cache = %d\n",
+						page->slab_cache->memcg_params->is_root_cache);
+			break;
+
+		case SLAB_DESTROY:
+			printk("destroy:\n");
+			kmem_cache_destroy(my_slab_cache);
+			printk("slab refcount = %d\n", my_slab_cache->refcount);
+			break;
 	}
 
-	for (i = 0; i < MY_OBJ_NUM; i++) {
-		kfree(memblk[i]);
-	}
-
-	kmem_cache_destroy(myslabobj);
+#if 0
+	char *str;
+	str = (char *)kmalloc(512, GFP_KERNEL);
+	memset(str, 1, 512);
+	kfree(str);
+#endif
 }
 
 static int write_op(void *data, u64 value)
