@@ -445,7 +445,8 @@ slab_obj_t memblk[MY_OBJ_NUM];
 struct kmem_cache *my_slab_cache;
 
 enum{
-	SLAB_CREATE_ALLOC,
+	SLAB_CREATE,
+	SLAB_ALLOC,
 	SLAB_FREE,
 	SLAB_DESTROY
 };
@@ -455,14 +456,17 @@ void test_slub() {
 	struct page *page;
 
 	switch (arg0){
-		case SLAB_CREATE_ALLOC:
-			printk("create and allocate:\n");
+		case SLAB_CREATE:
+			printk("create:\n");
 			my_slab_cache = kmem_cache_create("my_slab_cache",
 					sizeof(struct slab_obj), 0, SLAB_HWCACHE_ALIGN, NULL);
 			printk("my_slab_cache = 0x%llx, cpu_slab = 0x%llx\n",
 					(uint64_t)my_slab_cache,
 					(uint64_t)__this_cpu_ptr(my_slab_cache->cpu_slab));
+			break;
 
+		case SLAB_ALLOC:
+			printk("allocate:\n");
 			for (i = 0; i < MY_OBJ_NUM; i++) {
 				memblk[i] = kmem_cache_alloc(my_slab_cache, GFP_KERNEL);
 
@@ -486,10 +490,12 @@ void test_slub() {
 					__this_cpu_ptr(my_slab_cache->cpu_slab)->page,
 					page);
 
+#if 0
 			if (page->slab_cache->memcg_params &&
 					page->slab_cache->memcg_params->is_root_cache)
 				printk("is the page a root cache = %d\n",
 						page->slab_cache->memcg_params->is_root_cache);
+#endif
 			break;
 
 		case SLAB_FREE:
@@ -511,10 +517,12 @@ void test_slub() {
 						my_slab_cache->refcount);
 			}
 
+#if 0
 			if (page->slab_cache->memcg_params &&
 					page->slab_cache->memcg_params->is_root_cache)
 				printk("is the page a root cache = %d\n",
 						page->slab_cache->memcg_params->is_root_cache);
+#endif
 			break;
 
 		case SLAB_DESTROY:
